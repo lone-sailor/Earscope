@@ -48,10 +48,8 @@ The application communicates over raw UDP:
 cd windows
 pip install -r requirements.txt
 build_exe.bat
-<<<<<<< HEAD
+
 ---
-=======
->>>>>>> 95a6776ce5562297bd4ce3bf1a9f2d9f0c8279f5
 
 ## CREDITS
 Icon: Alessandro Roncone (https://github.com/alecive/FlatWoken)
