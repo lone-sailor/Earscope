@@ -1,0 +1,20 @@
+# Windows / Python
+windows/build/[cite: 3]
+windows/dist/[cite: 3]
+windows/*.spec
+*.py[cod]
+__pycache__/
+.earscope_config.json[cite: 1]
+
+# Android / Gradle
+android/.gradle/
+android/build/
+android/*/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/.cxx/
+
+# OS Specifics
+.DS_Store
+Thumbs.db
