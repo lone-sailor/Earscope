@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions UI tab
 
 permissions:
   contents: write
@@ -54,18 +55,33 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      # Automatically installs Gradle on runner; acts as fallback if wrapper jar is missing
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
       - name: Make Gradle Wrapper Executable
-        run: chmod +x android/gradlew
+        run: |
+          if [ -f "android/gradlew" ]; then
+            chmod +x android/gradlew
+          fi
 
       - name: Build Android APK
         run: |
           cd android
-          ./gradlew assembleRelease || ./gradlew assembleDebug
+          if [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+            ./gradlew assembleRelease || ./gradlew assembleDebug
+          else
+            gradle assembleRelease || gradle assembleDebug
+          fi
 
       - name: Find and Stage APK
         run: |
           mkdir -p staging
-          find android/app/build/outputs/apk/ -name "*.apk" -exec cp {} staging/EarScope-Android.apk \;
+          APK_PATH=$(find android/app/build/outputs/apk/ -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "Error: No APK found after build!" && exit 1
+          fi
+          cp "$APK_PATH" staging/EarScope-Android.apk
 
       - name: Upload Android Artifact
         uses: actions/upload-artifact@v4
@@ -75,6 +91,7 @@ jobs:
 
   publish-release:
     needs: [build-windows, build-android]
+    if: startsWith(github.ref, 'refs/tags/') # Only publish release when triggered by a tag
     runs-on: ubuntu-latest
     steps:
       - name: Download Windows Artifact
