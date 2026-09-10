@@ -43,9 +43,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,8 +57,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.IOException
-import java.io.OutputStream
 
 private val DarkPurpleBg = Color(0xFF271E2B)
 private val OrangeButton = Color(0xFFFD8618)
@@ -118,17 +120,19 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun EarScopeScreen() {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var ipText by remember { mutableStateOf("192.168.10.123") }
     var stream by remember { mutableStateOf<CameraStream?>(null) }
     var rotationAngle by remember { mutableFloatStateOf(0f) }
     var validationError by remember { mutableStateOf<String?>(null) }
 
-    val state by stream?.state?.collectAsState() ?: remember { mutableStateOf(StreamState.STOPPED) }
-    val errorMsg by stream?.errorMessage?.collectAsState() ?: remember { mutableStateOf("") }
-    val frame by stream?.latestFrame?.collectAsState() ?: remember { mutableStateOf(null) }
-    val fps by stream?.fps?.collectAsState() ?: remember { mutableIntStateOf(0) }
-    val battery by stream?.batteryLevel?.collectAsState() ?: remember { mutableIntStateOf(-1) }
-    val isLowBattery by stream?.isLowBattery?.collectAsState() ?: remember { mutableStateOf(false) }
+    val currentStream = stream
+    val state by currentStream?.state?.collectAsState() ?: remember { mutableStateOf<StreamState>(StreamState.STOPPED) }
+    val errorMsg by currentStream?.errorMessage?.collectAsState() ?: remember { mutableStateOf("") }
+    val frame by currentStream?.latestFrame?.collectAsState() ?: remember { mutableStateOf<Bitmap?>(null) }
+    val fps by currentStream?.fps?.collectAsState() ?: remember { mutableStateOf(0) }
+    val battery by currentStream?.batteryLevel?.collectAsState() ?: remember { mutableStateOf(-1) }
+    val isLowBattery by currentStream?.isLowBattery?.collectAsState() ?: remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -212,10 +216,15 @@ fun EarScopeScreen() {
                 .padding(horizontal = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
+            val isStreamingReady = state == StreamState.STREAMING && frame != null
             Button(
-                enabled = state == StreamState.STREAMING && frame != null,
+                enabled = isStreamingReady,
                 onClick = {
-                    frame?.let { saveSnapshot(context, it) }
+                    frame?.let { bmp ->
+                        coroutineScope.launch {
+                            saveSnapshotAsync(context, bmp)
+                        }
+                    }
                 },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = OrangeButton,
@@ -249,10 +258,10 @@ fun EarScopeScreen() {
                 .background(Color.Black, shape = RoundedCornerShape(8.dp)),
             contentAlignment = Alignment.Center
         ) {
-            val currentFrame = frame
-            if (currentFrame != null && state == StreamState.STREAMING) {
+            val activeBitmap = frame
+            if (state == StreamState.STREAMING && activeBitmap != null) {
                 Image(
-                    bitmap = currentFrame.asImageBitmap(),
+                    bitmap = activeBitmap.asImageBitmap(),
                     contentDescription = "Camera Feed",
                     modifier = Modifier
                         .fillMaxSize()
@@ -352,7 +361,7 @@ fun EarScopeScreen() {
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Status Footer: [State] ------ [Battery Status] ------ [FPS]
+        // Status Footer
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -408,7 +417,7 @@ private fun validateIpAddress(ip: String): Boolean {
     }
 }
 
-fun saveSnapshot(context: Context, bitmap: Bitmap) {
+suspend fun saveSnapshotAsync(context: Context, bitmap: Bitmap) = withContext(Dispatchers.IO) {
     val filename = "earscope_${System.currentTimeMillis()}.jpg"
     val values = ContentValues().apply {
         put(MediaStore.Images.Media.DISPLAY_NAME, filename)
@@ -423,8 +432,7 @@ fun saveSnapshot(context: Context, bitmap: Bitmap) {
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IOException("Failed to create MediaStore entry.")
 
-        val out: OutputStream? = resolver.openOutputStream(uri)
-        out?.use { stream ->
+        resolver.openOutputStream(uri)?.use { stream ->
             if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 95, stream)) {
                 throw IOException("JPEG compression failed.")
             }
@@ -435,9 +443,14 @@ fun saveSnapshot(context: Context, bitmap: Bitmap) {
             values.put(MediaStore.Images.Media.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
         }
-        Toast.makeText(context, "Saved snapshot to Photos", Toast.LENGTH_SHORT).show()
+
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "Saved snapshot to Photos", Toast.LENGTH_SHORT).show()
+        }
     } catch (e: Exception) {
         Log.e("MainActivity", "Failed to save snapshot: ${e.message}", e)
-        Toast.makeText(context, "Failed to save snapshot: ${e.localizedMessage ?: "Storage error"}", Toast.LENGTH_LONG).show()
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "Failed to save snapshot: ${e.localizedMessage ?: "Storage error"}", Toast.LENGTH_LONG).show()
+        }
     }
 }

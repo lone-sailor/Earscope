@@ -10,9 +10,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.BindException
 import java.net.DatagramPacket
@@ -58,23 +60,24 @@ class CameraStream(private val cameraIp: String) {
     private var fpsJob: Job? = null
 
     private val _state = MutableStateFlow(StreamState.STOPPED)
-    val state: StateFlow<StreamState> = _state
+    val state: StateFlow<StreamState> = _state.asStateFlow()
 
     private val _errorMessage = MutableStateFlow("")
-    val errorMessage: StateFlow<String> = _errorMessage
+    val errorMessage: StateFlow<String> = _errorMessage.asStateFlow()
 
     private val _latestFrame = MutableStateFlow<Bitmap?>(null)
-    val latestFrame: StateFlow<Bitmap?> = _latestFrame
+    val latestFrame: StateFlow<Bitmap?> = _latestFrame.asStateFlow()
 
     private val _fps = MutableStateFlow(0)
-    val fps: StateFlow<Int> = _fps
+    val fps: StateFlow<Int> = _fps.asStateFlow()
 
     private val _batteryLevel = MutableStateFlow(-1)
-    val batteryLevel: StateFlow<Int> = _batteryLevel
+    val batteryLevel: StateFlow<Int> = _batteryLevel.asStateFlow()
 
     private val _isLowBattery = MutableStateFlow(false)
-    val isLowBattery: StateFlow<Boolean> = _isLowBattery
+    val isLowBattery: StateFlow<Boolean> = _isLowBattery.asStateFlow()
 
+    @Volatile
     private var frameCount = 0
 
     fun start() {
@@ -96,6 +99,7 @@ class CameraStream(private val cameraIp: String) {
         _errorMessage.value = ""
         _batteryLevel.value = -1
         _isLowBattery.value = false
+        _latestFrame.value = null
     }
 
     private fun createCleanSocket(timeout: Int): DatagramSocket {
@@ -149,7 +153,6 @@ class CameraStream(private val cameraIp: String) {
                     try {
                         socket.receive(replyPacket)
                     } catch (_: SocketTimeoutException) {}
-
                 } catch (e: Exception) {
                     if (!isActive) break
                     Log.d(TAG, "Heartbeat error: ${e.message}")
@@ -272,29 +275,30 @@ class CameraStream(private val cameraIp: String) {
                     val isComplete = (0..maxIdx).all { chunks.containsKey(it) }
 
                     if (isComplete) {
-                        var totalBytes = ByteArray(0)
+                        val frameStream = ByteArrayOutputStream(expectedSize)
                         for (i in 0..maxIdx) {
-                            val part = chunks[i]
-                            if (part != null) {
-                                totalBytes += part
-                            }
+                            val part = chunks[i] ?: break
+                            frameStream.write(part)
                         }
 
+                        val totalBytes = frameStream.toByteArray()
+
                         if (totalBytes.size == expectedSize && totalBytes[0] == 0xFF.toByte() && totalBytes[1] == 0xD8.toByte()) {
-                            try {
-                                val bitmap = BitmapFactory.decodeByteArray(totalBytes, 0, totalBytes.size)
-                                if (bitmap != null) {
-                                    _latestFrame.value = bitmap
-                                    frameCount++
-                                    lastGoodFrameAt = now
-                                    _state.value = StreamState.STREAMING
-                                    _errorMessage.value = ""
+                            launch(Dispatchers.Default) {
+                                try {
+                                    val bitmap = BitmapFactory.decodeByteArray(totalBytes, 0, totalBytes.size)
+                                    if (bitmap != null) {
+                                        _latestFrame.value = bitmap
+                                        frameCount++
+                                        lastGoodFrameAt = now
+                                        _state.value = StreamState.STREAMING
+                                        _errorMessage.value = ""
+                                    }
+                                } catch (_: OutOfMemoryError) {
+                                    Log.w(TAG, "Dropped frame due to memory constraint")
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Frame decode failed: ${e.message}")
                                 }
-                            } catch (_: OutOfMemoryError) {
-                                System.gc()
-                                Log.w(TAG, "Dropped frame due to memory constraint")
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Frame decode failed: ${e.message}")
                             }
                         }
                     }
