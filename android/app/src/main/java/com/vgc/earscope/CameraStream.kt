@@ -187,21 +187,24 @@ class CameraStream(private val cameraIp: String) {
         while (isActive) {
             try {
                 if (socket == null || socket.isClosed) {
-                    address = InetAddress.getByName(cameraIp)
-                    socket = createCleanSocket(timeout = 500)
-                    socket.send(DatagramPacket(TRIGGER, TRIGGER.size, address, CAMERA_PORT))
+                    val newAddress = InetAddress.getByName(cameraIp)
+                    address = newAddress
+                    val newSocket = createCleanSocket(timeout = 500)
+                    newSocket.send(DatagramPacket(TRIGGER, TRIGGER.size, newAddress, CAMERA_PORT))
+                    socket = newSocket
                     lastKeepalive = System.currentTimeMillis()
                 }
 
+                val activeSocket = socket ?: continue
+                val targetAddress = address ?: continue
+
                 try {
-                    socket.receive(packet)
+                    activeSocket.receive(packet)
                 } catch (_: SocketTimeoutException) {
-                    address?.let {
-                        try {
-                            socket.send(DatagramPacket(TRIGGER, TRIGGER.size, it, CAMERA_PORT))
-                        } catch (sendEx: Exception) {
-                            throw sendEx
-                        }
+                    try {
+                        activeSocket.send(DatagramPacket(TRIGGER, TRIGGER.size, targetAddress, CAMERA_PORT))
+                    } catch (sendEx: Exception) {
+                        throw sendEx
                     }
                     chunks.clear()
                     expectedSize = null
@@ -220,12 +223,10 @@ class CameraStream(private val cameraIp: String) {
                 }
 
                 if (now - lastKeepalive > 1000) {
-                    address?.let {
-                        try {
-                            socket.send(DatagramPacket(TRIGGER, TRIGGER.size, it, CAMERA_PORT))
-                        } catch (sendEx: Exception) {
-                            throw sendEx
-                        }
+                    try {
+                        activeSocket.send(DatagramPacket(TRIGGER, TRIGGER.size, targetAddress, CAMERA_PORT))
+                    } catch (sendEx: Exception) {
+                        throw sendEx
                     }
                     lastKeepalive = now
                 }
