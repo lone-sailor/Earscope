@@ -10,7 +10,7 @@ Features native clients for both **Windows (Desktop)** and **Android**.
 
 Download the latest pre-compiled binaries from the **[Releases](../../releases)** tab:
 * **Windows:** `EarScope-Windows.exe` (Single standalone executable, no Python required)
-* **Android:** `EarScope-Android.apk` (Installs directly on Android 7.0+)
+* **Android:** `EarScope-Android.apk` (Installs directly on Android 7.0+) (Tested on Android 11 and Android 17)
 
 ---
 
